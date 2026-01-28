@@ -327,6 +327,10 @@ class Game {
     this.msgs = [];
     
     this.lastGroupTap = {};
+
+    this.aiState = 'prepare'; // prepare, gather, attack, defend
+    this.aiAttackTarget = null;
+    this.aiRallyPt = null;
   }
 
   init() {
@@ -686,6 +690,27 @@ class Game {
       
       e.vx = 0;
       e.vy = 0;
+
+      // Wall collision
+      const gx = Math.floor(e.x / T), gy = Math.floor(e.y / T);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = gx + dx, ny = gy + dy;
+          if (this.map.grid[ny] && this.map.grid[ny][nx] === 1) {
+            const closestX = Math.max(nx * T, Math.min(e.x, nx * T + T));
+            const closestY = Math.max(ny * T, Math.min(e.y, ny * T + T));
+            const distX = e.x - closestX, distY = e.y - closestY;
+            const distSq = distX * distX + distY * distY;
+            if (distSq < (e.sz * e.sz) && distSq > 0) {
+              const dist = Math.sqrt(distSq);
+              const pen = e.sz - dist;
+              e.x += (distX / dist) * pen;
+              e.y += (distY / dist) * pen;
+            }
+          }
+        }
+      }
     }
   }
   
@@ -1133,6 +1158,7 @@ class Game {
   updateAI() {
     const cfg = { easy: { mult: 0.8, atk: 20 }, normal: { mult: 1.3, atk: 12 }, hard: { mult: 2, atk: 8 }, insane: { mult: 3, atk: 5 } }[this.diff];
     
+    // Cheat resources
     this.aiRes.m += cfg.mult * 0.5;
     this.aiRes.g += cfg.mult * 0.15;
     
@@ -1146,6 +1172,7 @@ class Game {
     const base = buildings.find(b => BUILDINGS[b.type]?.base);
     if (!base) return;
     
+    // --- Economy & Production ---
     // Workers harvest
     for (const w of workers) {
       if (w.constructing) continue;
@@ -1166,8 +1193,8 @@ class Game {
       if (w.harvesting) this.updateHarvest(w, 16);
     }
     
-    // Build supply
-    if (this.aiRes.sup >= this.aiRes.maxSup - 3) {
+    // Build Supply
+    if (this.aiRes.sup >= this.aiRes.maxSup - 3 && this.aiRes.maxSup < 200) {
       if (race.s === 'overlord') {
         const hatch = buildings.find(b => BUILDINGS[b.type]?.prod?.includes('overlord') && !b.producing);
         if (hatch && this.aiRes.m >= 100) this.startProdInternal(hatch, 'overlord', 1);
@@ -1180,7 +1207,7 @@ class Game {
       }
     }
     
-    // Build production
+    // Expand production
     const prodBs = buildings.filter(b => BUILDINGS[b.type]?.prod && !BUILDINGS[b.type]?.base);
     if (prodBs.length < 3 && this.aiRes.m >= 150) {
       let buildType = null;
@@ -1204,8 +1231,8 @@ class Game {
       }
     }
     
-    // Produce workers
-    if (workers.length < 20) {
+    // Produce Workers
+    if (workers.length < 24) {
       for (const b of buildings) {
         if (BUILDINGS[b.type]?.prod?.includes(race.w) && !b.producing) {
           const wd = UNITS[race.w];
@@ -1217,7 +1244,7 @@ class Game {
       }
     }
     
-    // Produce army
+    // Produce Army
     for (const pb of buildings) {
       if (pb.producing || pb.prodQueue.length >= 3) continue;
       const bd = BUILDINGS[pb.type];
@@ -1238,33 +1265,108 @@ class Game {
       }
     }
     
-    // Army control
-    if (army.length >= cfg.atk) {
-      const target = enemies.find(e => e.isBuilding) || enemies[0];
-      if (target) {
-        for (const u of army) {
-          if (!u.target || u.target.hp <= 0) {
-            let closest = null, minD = 400;
-            for (const e of enemies) {
-              const d = Math.sqrt((e.x - u.x) ** 2 + (e.y - u.y) ** 2);
-              if (d < minD) { closest = e; minD = d; }
-            }
-            if (closest) { u.target = closest; u.attackMove = true; }
-            else if (u.path.length === 0) {
-              u.path = findPath(this.map.grid, u.x, u.y, target.x + (Math.random() - 0.5) * 80, target.y + (Math.random() - 0.5) * 80);
+    // --- Strategic AI State Machine ---
+
+    // 1. Defend Override
+    const threats = enemies.filter(e => Math.sqrt((e.x - base.x) ** 2 + (e.y - base.y) ** 2) < 500);
+    if (threats.length > 0) {
+      this.aiState = 'defend';
+      this.aiAttackTarget = threats[0];
+    } else if (this.aiState === 'defend') {
+      this.aiState = 'prepare';
+    }
+
+    // 2. State Logic
+    if (this.aiState === 'prepare') {
+      if (army.length >= cfg.atk) {
+        this.aiState = 'gather';
+        // Pick gather point between base and likely enemy location
+        const enemyBase = this.map.bases[0]; // Player base
+        this.aiRallyPt = {
+          x: base.x + (enemyBase.x - base.x) * 0.3,
+          y: base.y + (enemyBase.y - base.y) * 0.3
+        };
+      }
+    } else if (this.aiState === 'gather') {
+      // Check if army is gathered
+      const nearRally = army.filter(u => Math.sqrt((u.x - this.aiRallyPt.x)**2 + (u.y - this.aiRallyPt.y)**2) < 250).length;
+      if (nearRally > army.length * 0.7 || army.length > cfg.atk * 1.5) {
+        this.aiState = 'attack';
+        const enemyBase = enemies.find(e => BUILDINGS[e.type]?.base) || enemies[0];
+        this.aiAttackTarget = enemyBase;
+      }
+    } else if (this.aiState === 'attack') {
+      if (army.length < cfg.atk * 0.3) {
+        this.aiState = 'prepare'; // Retreat if decimated
+      } else if (!this.aiAttackTarget || this.aiAttackTarget.hp <= 0) {
+        const enemyBase = enemies.find(e => BUILDINGS[e.type]?.base) || enemies[0];
+        this.aiAttackTarget = enemyBase;
+      }
+    }
+
+    // 3. Command Execution & Micro
+    for (const u of army) {
+      // Micro Logic
+      let microAction = false;
+
+      // Kiting (Ranged units vs Melee/Short range)
+      if (u.rng > 100 && u.dmg > 0 && (this.time - u.lastAtk < u.as * 0.7)) {
+        // Find closest enemy
+        let closest = null, minDist = 200;
+        for (const e of enemies) {
+          const d = Math.sqrt((e.x - u.x)**2 + (e.y - u.y)**2);
+          if (d < minDist) { minDist = d; closest = e; }
+        }
+
+        if (closest && minDist < u.rng - 30) {
+          // Move away
+          const dx = u.x - closest.x, dy = u.y - closest.y;
+          const mag = Math.sqrt(dx*dx + dy*dy);
+          if (mag > 0) {
+              u.path = findPath(this.map.grid, u.x, u.y, u.x + (dx/mag)*100, u.y + (dy/mag)*100);
               u.pathIdx = 0;
-              u.attackMove = true;
-            }
+              u.target = null;
+              u.attackMove = false;
+              microAction = true;
           }
         }
       }
-    } else {
-      for (const u of army) {
-        const threat = enemies.find(e => Math.sqrt((e.x - base.x) ** 2 + (e.y - base.y) ** 2) < 400);
-        if (threat) { u.target = threat; u.attackMove = true; }
-        else if (Math.sqrt((u.x - base.x) ** 2 + (u.y - base.y) ** 2) > 200 && u.path.length === 0) {
-          u.path = findPath(this.map.grid, u.x, u.y, base.x + (Math.random() - 0.5) * 80, base.y + (Math.random() - 0.5) * 80);
+
+      if (microAction) continue;
+
+      // State Commands
+      if (this.aiState === 'defend') {
+        if (!u.target || u.target.hp <= 0) {
+          u.path = findPath(this.map.grid, u.x, u.y, this.aiAttackTarget.x, this.aiAttackTarget.y);
           u.pathIdx = 0;
+          u.attackMove = true;
+        }
+      } else if (this.aiState === 'gather') {
+        if (Math.sqrt((u.x - this.aiRallyPt.x)**2 + (u.y - this.aiRallyPt.y)**2) > 100) {
+          if (u.path.length === 0) {
+             u.path = findPath(this.map.grid, u.x, u.y, this.aiRallyPt.x + (Math.random()-0.5)*50, this.aiRallyPt.y + (Math.random()-0.5)*50);
+             u.pathIdx = 0;
+             u.attackMove = true;
+          }
+        }
+      } else if (this.aiState === 'attack') {
+        if (this.aiAttackTarget && (!u.target || u.target.hp <= 0)) {
+             u.path = findPath(this.map.grid, u.x, u.y, this.aiAttackTarget.x, this.aiAttackTarget.y);
+             u.pathIdx = 0;
+             u.attackMove = true;
+        } else if (!this.aiAttackTarget) {
+            if (u.path.length === 0) {
+                u.path = findPath(this.map.grid, u.x, u.y, u.x + (Math.random()-0.5)*500, u.y + (Math.random()-0.5)*500);
+                u.pathIdx = 0;
+                u.attackMove = true;
+            }
+        }
+      } else {
+        // Prepare/Idle: Defend near base
+        if (Math.sqrt((u.x - base.x)**2 + (u.y - base.y)**2) > 300) {
+           u.path = findPath(this.map.grid, u.x, u.y, base.x + (Math.random()-0.5)*100, base.y + (Math.random()-0.5)*100);
+           u.pathIdx = 0;
+           u.attackMove = true;
         }
       }
     }
