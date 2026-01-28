@@ -367,7 +367,7 @@ class Game {
       as: data.as || 0, rng: (data.rng || 0) * T,
       spd: data.spd || 0, sz: data.sz,
       vis: (data.vis || 8) * T,
-      team, isBuilding,
+      team, isBuilding, r: data.r,
       
       sel: false,
       lastAtk: 0, lastHit: 0,
@@ -1272,6 +1272,140 @@ class Game {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// RENDER HELPERS
+// ═══════════════════════════════════════════════════════════════
+const drawEntity = (ctx, e, sx, sy, z, raceD, isAlly, time) => {
+  const sz = e.sz * z;
+  const color = isAlly ? raceD.c : '#e44';
+  const darker = isAlly ? raceD.d : '#822';
+  const lighter = isAlly ? raceD.l : '#faa';
+
+  // Selection
+  if (e.sel) {
+    ctx.strokeStyle = '#0f0'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy + sz * 0.5, sz * 1.2, sz * 0.7, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    // Health bar for selection
+    const barW = sz * 2.2, barH = 4 * z, barY = sy - sz - 12 * z;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(sx - barW / 2 - 1, barY - 1, barW + 2, (e.maxSh > 0 ? barH * 2 + 3 : barH + 2));
+    if (e.maxSh > 0) { ctx.fillStyle = '#4af'; ctx.fillRect(sx - barW / 2, barY, barW * (e.sh / e.maxSh), barH); }
+    const hpY = e.maxSh > 0 ? barY + barH + 1 : barY;
+    const hpPct = e.hp / e.maxHp;
+    ctx.fillStyle = hpPct > 0.6 ? '#0f0' : hpPct > 0.3 ? '#fa0' : '#f00';
+    ctx.fillRect(sx - barW / 2, hpY, barW * hpPct, barH);
+  }
+
+  if (e.isBuilding) {
+    if (e.built < 1) {
+      // Wireframe construction
+      ctx.strokeStyle = color; ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(sx - sz, sy - sz, sz * 2, sz * 2);
+      ctx.setLineDash([]);
+      ctx.fillStyle = color; ctx.globalAlpha = 0.3;
+      ctx.fillRect(sx - sz, sy - sz + (sz * 2) * (1 - e.built), sz * 2, sz * 2 * e.built);
+      ctx.globalAlpha = 1.0;
+
+      // Progress text
+      ctx.fillStyle = '#fff'; ctx.font = `${10*z}px Arial`; ctx.textAlign = 'center';
+      ctx.fillText(`${Math.floor(e.built * 100)}%`, sx, sy);
+      return;
+    }
+
+    // Finished Building
+    if (e.r === 'terran') {
+      ctx.fillStyle = darker; ctx.fillRect(sx - sz, sy - sz, sz * 2, sz * 2);
+      ctx.fillStyle = '#334'; ctx.fillRect(sx - sz + 2*z, sy - sz + 2*z, sz * 2 - 4*z, sz * 2 - 4*z);
+      ctx.fillStyle = color; ctx.fillRect(sx - sz*0.6, sy - sz*0.6, sz*1.2, sz*1.2);
+      // Detail lines
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(sx - sz, sy); ctx.lineTo(sx + sz, sy); ctx.moveTo(sx, sy - sz); ctx.lineTo(sx, sy + sz); ctx.stroke();
+    } else if (e.r === 'protoss') {
+      ctx.shadowBlur = 10 * z; ctx.shadowColor = color;
+      ctx.fillStyle = darker; ctx.beginPath(); ctx.arc(sx, sy, sz, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#eda'; ctx.beginPath(); ctx.arc(sx, sy, sz * 0.7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#4af'; ctx.beginPath(); ctx.arc(sx, sy, sz * 0.3, 0, Math.PI * 2); ctx.fill();
+    } else { // Zerg
+      ctx.fillStyle = darker; ctx.beginPath(); ctx.ellipse(sx, sy, sz, sz * 0.9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(sx, sy - sz * 0.2, sz * 0.6, sz * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+      // Pulsing
+      const p = (Math.sin(time / 200) + 1) / 2;
+      ctx.fillStyle = '#f88'; ctx.beginPath(); ctx.arc(sx, sy, sz * 0.2 + p * 2 * z, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Production progress bar
+    if (e.producing) {
+      const pd = UNITS[e.producing];
+      if (pd) {
+        const prog = 1 - (e.prodEnd - time) / (pd.bt * 1000);
+        ctx.fillStyle = '#000'; ctx.fillRect(sx - sz, sy + sz + 5*z, sz * 2, 4*z);
+        ctx.fillStyle = '#ff0'; ctx.fillRect(sx - sz, sy + sz + 5*z, sz * 2 * Math.max(0, Math.min(1, prog)), 4*z);
+      }
+    }
+  } else {
+    // Unit
+    const facing = e.target ? Math.atan2(e.target.y - e.y, e.target.x - e.x) : (Math.atan2(e.vy, e.vx) || 0);
+
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath(); ctx.ellipse(2*z, sz*0.8, sz*0.8, sz*0.4, 0, 0, Math.PI*2); ctx.fill();
+
+    ctx.rotate(facing);
+
+    if (e.type === 'siegetank') {
+      ctx.fillStyle = darker; ctx.fillRect(-sz, -sz*0.7, sz*2, sz*1.4); // Tracks
+      ctx.fillStyle = color; ctx.fillRect(-sz*0.6, -sz*0.5, sz*1.2, sz); // Body
+      // Turret
+      ctx.fillStyle = darker; ctx.beginPath(); ctx.arc(0, 0, sz*0.5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000'; ctx.fillRect(0, -2*z, sz*1.2, 4*z); // Barrel
+      if (e.sieged) {
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, sz, 0, Math.PI*2); ctx.stroke();
+      }
+    } else if (['marine', 'marauder', 'reaper', 'ghost'].includes(e.type)) {
+      ctx.fillStyle = darker; ctx.beginPath(); ctx.arc(0, 0, sz, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, sz*0.6, 0, Math.PI*2); ctx.fill();
+      // Gun
+      ctx.fillStyle = '#888'; ctx.fillRect(sz*0.4, -2*z, sz*0.8, 4*z);
+    } else if (['zergling', 'hydralisk', 'roach'].includes(e.type)) {
+      ctx.fillStyle = darker;
+      ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz, sz*0.8); ctx.lineTo(-sz*0.5, 0); ctx.lineTo(-sz, -sz*0.8); ctx.fill();
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, sz*0.4, 0, Math.PI*2); ctx.fill();
+    } else if (['zealot', 'darktemplar'].includes(e.type)) {
+      ctx.fillStyle = darker; ctx.beginPath(); ctx.arc(0, 0, sz, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, sz*0.6, 0, Math.PI*2); ctx.fill();
+      // Psi blades
+      ctx.strokeStyle = '#0ff'; ctx.lineWidth = 2*z; ctx.shadowBlur = 5*z; ctx.shadowColor = '#0ff';
+      ctx.beginPath(); ctx.moveTo(sz*0.2, -sz*0.4); ctx.lineTo(sz*1.2, -sz*0.8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(sz*0.2, sz*0.4); ctx.lineTo(sz*1.2, sz*0.8); ctx.stroke();
+      ctx.shadowBlur = 0;
+    } else if (['stalker', 'immortal', 'colossus'].includes(e.type)) {
+       ctx.fillStyle = darker; ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz*0.5, sz); ctx.lineTo(-sz*0.5, -sz); ctx.fill();
+       ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, sz*0.5, 0, Math.PI*2); ctx.fill();
+    } else {
+      // Default
+      ctx.fillStyle = darker; ctx.beginPath(); ctx.arc(0, 0, sz, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, sz*0.6, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillRect(sz*0.5, -1*z, sz*0.5, 2*z);
+    }
+
+    ctx.restore();
+
+    // Stim effect
+    if (e.buffs.some(b => b.type === 'stim')) {
+      ctx.strokeStyle = '#f00'; ctx.lineWidth = 1; ctx.setLineDash([2,2]);
+      ctx.beginPath(); ctx.arc(sx, sy, sz+2*z, 0, Math.PI*2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
 // REACT COMPONENT
 // ═══════════════════════════════════════════════════════════════
 export default function RTSGame() {
@@ -1340,8 +1474,31 @@ export default function RTSGame() {
 
       const z = cam.z;
       
-      ctx.fillStyle = '#0c0c14';
+      ctx.fillStyle = '#101018';
       ctx.fillRect(0, 0, W, H);
+
+      // Grid
+      const gridSz = T * z;
+      const offX = -cam.x * z % gridSz, offY = -cam.y * z % gridSz;
+      ctx.strokeStyle = '#222'; ctx.lineWidth = 1; ctx.beginPath();
+      for (let gx = offX; gx < W; gx += gridSz) { ctx.moveTo(gx, 0); ctx.lineTo(gx, H); }
+      for (let gy = offY; gy < H; gy += gridSz) { ctx.moveTo(0, gy); ctx.lineTo(W, gy); }
+      ctx.stroke();
+
+      // Zerg Creep
+      ctx.fillStyle = '#313';
+      for (const e of game.entities) {
+        if (e.isBuilding && e.built >= 1) {
+          const bd = BUILDINGS[e.type];
+          if (bd && bd.r === 'zerg') {
+            const cx = (e.x - cam.x) * z, cy = (e.y - cam.y) * z;
+            if (cx > -200 && cx < W + 200 && cy > -200 && cy < H + 200) {
+              const r = (e.sz + 80) * z;
+              ctx.beginPath(); ctx.ellipse(cx, cy, r, r * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+            }
+          }
+        }
+      }
       
       // Obstacles
       ctx.fillStyle = '#252538';
@@ -1349,7 +1506,13 @@ export default function RTSGame() {
         for (let x = 0; x < game.map.cols; x++) {
           if (game.map.grid[y][x] === 1) {
             const sx = (x * T - cam.x) * z, sy = (y * T - cam.y) * z;
-            if (sx > -T * z && sx < W && sy > -T * z && sy < H) ctx.fillRect(sx, sy, T * z, T * z);
+            if (sx > -T * z && sx < W && sy > -T * z && sy < H) {
+              ctx.fillRect(sx, sy, T * z, T * z);
+              // 3D effect
+              ctx.fillStyle = '#151520'; ctx.fillRect(sx + 4*z, sy + 4*z, T * z, T * z);
+              ctx.fillStyle = '#353548'; ctx.fillRect(sx, sy, T * z, T * z);
+              ctx.strokeStyle = '#556'; ctx.strokeRect(sx, sy, T * z, T * z);
+            }
           }
         }
       }
@@ -1360,6 +1523,7 @@ export default function RTSGame() {
         if (sx > -40 && sx < W + 40 && sy > -40 && sy < H + 40 && m.amount > 0) {
           ctx.fillStyle = `rgba(80,180,255,${0.6 + m.amount / 3000 * 0.4})`;
           ctx.beginPath(); ctx.moveTo(sx, sy - 14 * z); ctx.lineTo(sx + 10 * z, sy); ctx.lineTo(sx, sy + 14 * z); ctx.lineTo(sx - 10 * z, sy); ctx.closePath(); ctx.fill();
+          ctx.strokeStyle = '#adf'; ctx.lineWidth = 1; ctx.stroke();
         }
       }
       for (const g of game.map.geysers) {
@@ -1367,6 +1531,10 @@ export default function RTSGame() {
         if (sx > -40 && sx < W + 40 && sy > -40 && sy < H + 40 && g.amount > 0) {
           ctx.fillStyle = `rgba(80,255,80,${0.5 + g.amount / 5000 * 0.5})`;
           ctx.beginPath(); ctx.arc(sx, sy, 18 * z, 0, Math.PI * 2); ctx.fill();
+          // Smoke
+          const p = (Math.sin(game.time / 500) + 1) / 2;
+          ctx.fillStyle = `rgba(100,255,100,${0.2 * p})`;
+          ctx.beginPath(); ctx.arc(sx, sy - 20*z - p*20*z, 10*z + p*10*z, 0, Math.PI*2); ctx.fill();
         }
       }
       
@@ -1382,7 +1550,7 @@ export default function RTSGame() {
         }
       }
       
-      // Rally points
+      // Rally points and Lines
       for (const e of game.entities) {
         if (e.sel && e.rally) {
           const sx = (e.x - cam.x) * z, sy = (e.y - cam.y) * z;
@@ -1410,6 +1578,16 @@ export default function RTSGame() {
           }
           ctx.setLineDash([]);
         }
+
+        // Attack lines
+        if (e.target?.hp > 0 && (e.sel || e.dmg > 0)) {
+            // Only draw lines if selected? or if attacking?
+            // Original code drew attack indicator for all selected or something?
+            // "Attack indicator" was loop over all entities.
+            // Let's keep it simple here, we'll handle attack lines inside loop or here?
+            // Actually I removed the loop that drew attack lines inside the big loop.
+            // So I should add them here if I want them.
+        }
       }
       
       // Entities
@@ -1421,70 +1599,18 @@ export default function RTSGame() {
         const sx = (e.x - cam.x) * z, sy = (e.y - cam.y) * z;
         if (sx < -100 || sx > W + 100 || sy < -100 || sy > H + 100) continue;
         
-        const sz = e.sz * z;
         const raceD = RACES[e.team === 0 ? game.race : game.aiRace];
+        const isAlly = e.team === 0;
         
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.beginPath(); ctx.ellipse(sx, sy + sz * 0.8, sz * 0.8, sz * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+        drawEntity(ctx, e, sx, sy, z, raceD, isAlly, game.time);
         
-        if (e.isBuilding && e.built < 1) {
-          ctx.fillStyle = 'rgba(100,100,100,0.5)'; ctx.fillRect(sx - sz, sy - sz, sz * 2, sz * 2);
-          ctx.fillStyle = raceD.d; ctx.fillRect(sx - sz, sy - sz, sz * 2 * e.built, sz * 2);
-          ctx.fillStyle = '#000'; ctx.fillRect(sx - sz, sy + sz + 5, sz * 2, 6);
-          ctx.fillStyle = '#ff0'; ctx.fillRect(sx - sz, sy + sz + 5, sz * 2 * e.built, 6);
-          continue;
-        }
-        
-        if (e.isBuilding) {
-          ctx.fillStyle = e.team === 0 ? raceD.d : '#442';
-          ctx.fillRect(sx - sz, sy - sz, sz * 2, sz * 2);
-          ctx.strokeStyle = e.team === 0 ? raceD.c : '#844'; ctx.lineWidth = 2;
-          ctx.strokeRect(sx - sz + 2, sy - sz + 2, sz * 2 - 4, sz * 2 - 4);
-        } else {
-          const isStim = e.buffs.some(b => b.type === 'stim');
-          const isBuilding = e.constructing;
-          ctx.fillStyle = isBuilding ? '#8f8' : (e.sieged ? '#fa0' : (isStim ? '#f88' : (e.team === 0 ? raceD.c : '#e44')));
-          ctx.beginPath(); ctx.arc(sx, sy, sz, 0, Math.PI * 2); ctx.fill();
-          ctx.strokeStyle = e.team === 0 ? raceD.l : '#faa'; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.arc(sx, sy, sz - 2, 0, Math.PI * 2); ctx.stroke();
-          if (e.fly) { ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.arc(sx, sy, sz + 4, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
-          
-          // Attack indicator
-          if (e.target?.hp > 0) {
-            ctx.strokeStyle = 'rgba(255,0,0,0.4)'; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(sx, sy);
-            ctx.lineTo((e.target.x - cam.x) * z, (e.target.y - cam.y) * z);
-            ctx.stroke();
-          }
-        }
-        
-        if (e.sel) {
-          ctx.strokeStyle = '#0f0'; ctx.lineWidth = 2;
-          if (e.isBuilding) ctx.strokeRect(sx - sz - 4, sy - sz - 4, sz * 2 + 8, sz * 2 + 8);
-          else { ctx.beginPath(); ctx.arc(sx, sy, sz + 5, 0, Math.PI * 2); ctx.stroke(); }
-          if (e.rng > T && !e.isBuilding) {
-            ctx.strokeStyle = 'rgba(255,0,0,0.15)'; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.arc(sx, sy, e.rng * z, 0, Math.PI * 2); ctx.stroke();
-          }
-        }
-        
-        // HP
-        const barW = sz * 2.2, barH = 4 * z, barY = sy - sz - 12 * z;
-        ctx.fillStyle = '#000';
-        ctx.fillRect(sx - barW / 2 - 1, barY - 1, barW + 2, (e.maxSh > 0 ? barH * 2 + 3 : barH + 2));
-        if (e.maxSh > 0) { ctx.fillStyle = '#4af'; ctx.fillRect(sx - barW / 2, barY, barW * (e.sh / e.maxSh), barH); }
-        const hpY = e.maxSh > 0 ? barY + barH + 1 : barY;
-        const hpPct = e.hp / e.maxHp;
-        ctx.fillStyle = hpPct > 0.6 ? '#0f0' : hpPct > 0.3 ? '#fa0' : '#f00';
-        ctx.fillRect(sx - barW / 2, hpY, barW * hpPct, barH);
-        
-        // Production progress
-        if (e.producing) {
-          const pd = UNITS[e.producing];
-          if (pd) {
-            const prog = 1 - (e.prodEnd - game.time) / (pd.bt * 1000);
-            ctx.fillStyle = '#ff0'; ctx.fillRect(sx - barW / 2, sy + sz + 5, barW * Math.max(0, Math.min(1, prog)), 4);
-          }
+        // Attack line for selected units
+        if (e.sel && e.target?.hp > 0) {
+           ctx.strokeStyle = '#f00'; ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
+           ctx.beginPath(); ctx.moveTo(sx, sy);
+           ctx.lineTo((e.target.x - cam.x) * z, (e.target.y - cam.y) * z);
+           ctx.stroke();
+           ctx.setLineDash([]);
         }
       }
       
@@ -1539,7 +1665,7 @@ export default function RTSGame() {
       }
       
       // Minimap
-      const mw = 200, mh = 150;
+      const mw = 150, mh = 150;
       minimap.width = mw; minimap.height = mh;
       const scX = mw / game.map.w, scY = mh / game.map.h;
       mctx.fillStyle = '#0c0c14'; mctx.fillRect(0, 0, mw, mh);
@@ -1592,8 +1718,16 @@ export default function RTSGame() {
     }
     if (ui.abMode) {
       const { x, y } = toWorld(cx, cy);
-      gameRef.current.cmd('ability', { ab: ui.abMode, x, y }, e.shiftKey);
-      setUi(p => ({ ...p, abMode: null }));
+      if (ui.abMode === 'Attack') {
+        const click = gameRef.current.clickAt(x, y);
+        if (click.type === 'entity' && click.entity.team === 1) gameRef.current.cmd('attack', { target: click.entity }, e.shiftKey);
+        else gameRef.current.cmd('attackMove', { x, y }, e.shiftKey);
+      } else if (ui.abMode === 'Patrol') {
+        gameRef.current.cmd('patrol', { x, y }, e.shiftKey);
+      } else {
+        gameRef.current.cmd('ability', { ab: ui.abMode, x, y }, e.shiftKey);
+      }
+      if (!e.shiftKey) setUi(p => ({ ...p, abMode: null }));
       return;
     }
     dragRef.current = { active: true, sx: cx, sy: cy, ex: cx, ey: cy };
@@ -1677,6 +1811,8 @@ export default function RTSGame() {
       switch (e.key.toLowerCase()) {
         case 's': if (!e.ctrlKey) game.cmd('stop', {}); break;
         case 'h': game.cmd('hold', {}); break;
+        case 'a': if (game.selected.length > 0) setUi(p => ({ ...p, abMode: 'Attack' })); break;
+        case 'p': if (game.selected.length > 0) setUi(p => ({ ...p, abMode: 'Patrol' })); break;
         case 'escape': setUi(p => ({ ...p, buildMode: null, abMode: null })); break;
         case 'f1': const base = game.entities.find(e => e.team === 0 && e.isBuilding); if (base) { camRef.current.x = base.x - canvasRef.current.width / 2; camRef.current.y = base.y - canvasRef.current.height / 2; } break;
         case ' ': if (game.selected.length > 0) { const sel = game.selected[0]; camRef.current.x = sel.x - canvasRef.current.width / 2; camRef.current.y = sel.y - canvasRef.current.height / 2; } break;
@@ -1767,99 +1903,150 @@ export default function RTSGame() {
 
   const raceD = gameRef.current ? RACES[gameRef.current.race] : RACES.terran;
   
+  const renderCommandCard = () => {
+    const slots = [];
+    if (ui.sel.length > 0) {
+      slots.push({ k: 'S', n: 'Stop', fn: () => gameRef.current?.cmd('stop', {}), icon: '🛑' });
+      slots.push({ k: 'H', n: 'Hold', fn: () => gameRef.current?.cmd('hold', {}), icon: '✋' });
+      slots.push({ k: 'A', n: 'Attack', fn: () => setUi(p => ({ ...p, abMode: 'Attack' })), icon: '⚔️', active: ui.abMode === 'Attack' });
+      slots.push({ k: 'P', n: 'Patrol', fn: () => setUi(p => ({ ...p, abMode: 'Patrol' })), icon: '🛡️', active: ui.abMode === 'Patrol' });
+    }
+
+    ui.abilities.forEach(ab => {
+      slots.push({ k: ab.k, n: ab.n, fn: () => { if (ab.ready && ab.hasE) { if (ab.target) setUi(p => ({ ...p, abMode: ab.k })); else gameRef.current?.cmd('ability', { ab: ab.k }); } }, icon: '✨', active: ui.abMode === ab.k, disabled: !ab.ready || !ab.hasE });
+    });
+
+    if (ui.sel.some(e => e.canBuild)) {
+      getAvailBuildings().forEach(b => {
+        slots.push({ k: b.hk, n: b.key, fn: () => setUi(p => ({...p, buildMode: b.key})), icon: b.icon, active: ui.buildMode === b.key, disabled: ui.res.m < b.c.m || ui.res.g < (b.c.g || 0), cost: b.c });
+      });
+    }
+
+    getProdUnits().forEach(u => {
+      const ok = ui.res.m >= u.c.m && ui.res.g >= (u.c.g || 0) && ui.res.sup + (u.sup || 0) <= ui.res.maxSup;
+      slots.push({ k: u.hk, n: u.key, fn: () => gameRef.current?.cmd('produce', { unit: u.key }), icon: u.icon, disabled: !ok, cost: u.c, sup: u.sup });
+    });
+
+    const grid = Array(12).fill(null).map((_, i) => slots[i] || null);
+
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gridTemplateRows: 'repeat(3, 1fr)', gap: 3, height: '100%' }}>
+        {grid.map((s, i) => (
+          <div key={i} style={{ position: 'relative', background: '#222', border: s ? (s.active ? '2px solid #0f0' : '2px solid #555') : '1px solid #333', borderRadius: 4 }}>
+            {s && (
+              <button onClick={s.fn} disabled={s.disabled} style={{ width: '100%', height: '100%', background: 'transparent', border: 'none', color: s.disabled ? '#555' : '#fff', cursor: s.disabled ? 'not-allowed' : 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 2 }}>
+                <span style={{ fontSize: 16 }}>{s.icon}</span>
+                <span style={{ fontSize: 9, marginTop: 2 }}>{s.n.slice(0,7)}</span>
+                {s.cost && <span style={{ fontSize: 8, color: '#ad8' }}>{s.cost.m}</span>}
+                <div style={{ position: 'absolute', top: 2, left: 3, fontSize: 8, color: '#ff0' }}>{s.k}</div>
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#000', overflow: 'hidden', fontFamily: 'system-ui', userSelect: 'none' }}>
-      <div style={{ height: 40, background: 'linear-gradient(180deg, #1a1a28 0%, #0c0c14 100%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', borderBottom: '1px solid #333' }}>
-        <div style={{ display: 'flex', gap: 35, alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 16 }}>💎</span><span style={{ color: '#4af', fontSize: 14, fontWeight: 'bold', minWidth: 45 }}>{ui.res.m}</span></div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 16 }}>⛽</span><span style={{ color: '#4f4', fontSize: 14, fontWeight: 'bold', minWidth: 45 }}>{ui.res.g}</span></div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ fontSize: 14 }}>👥</span><span style={{ color: ui.res.sup >= ui.res.maxSup ? '#f44' : '#fa0', fontSize: 14, fontWeight: 'bold' }}>{Math.floor(ui.res.sup)}/{ui.res.maxSup}</span></div>
-        </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span style={{ color: '#666', fontSize: 10 }}>FPS: {ui.fps}</span>
-          <span style={{ color: raceD.c, fontSize: 11 }}>{raceD.n}</span>
-        </div>
+    <div style={{ width: '100vw', height: '100vh', background: '#000', overflow: 'hidden', fontFamily: 'system-ui', userSelect: 'none', color: '#ccc' }}>
+
+      {/* Top Bar */}
+      <div style={{ height: 36, background: 'linear-gradient(to bottom, #222, #111)', borderBottom: '1px solid #444', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 15px' }}>
+         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12, fontWeight: 'bold', color: raceD.c }}>{raceD.n.toUpperCase()} COMMAND</span>
+         </div>
+         <div style={{ display: 'flex', gap: 20, background: '#000', padding: '4px 15px', borderRadius: 4, border: '1px solid #333' }}>
+            <div style={{ color: '#4af', fontSize: 13, display: 'flex', gap: 5 }}><span>💎</span> <b>{ui.res.m}</b></div>
+            <div style={{ color: '#4f4', fontSize: 13, display: 'flex', gap: 5 }}><span>⛽</span> <b>{ui.res.g}</b></div>
+            <div style={{ color: ui.res.sup >= ui.res.maxSup ? '#f44' : '#fff', fontSize: 13, display: 'flex', gap: 5 }}><span>👥</span> <b>{Math.floor(ui.res.sup)}/{ui.res.maxSup}</b></div>
+         </div>
+         <div style={{ fontSize: 10, color: '#666' }}>FPS: {ui.fps}</div>
       </div>
       
+      {/* Game View */}
       <canvas ref={canvasRef} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onContextMenu={handleContextMenu} onWheel={handleWheel} style={{ display: 'block', cursor: ui.buildMode || ui.abMode ? 'crosshair' : 'default' }} />
       
+      {/* Messages */}
       <div style={{ position: 'absolute', top: 50, left: 20, pointerEvents: 'none' }}>
-        {ui.msgs.slice(-3).map((m, i) => (<div key={i} style={{ color: '#fff', fontSize: 11, marginBottom: 3, textShadow: '0 0 3px #000' }}>{m.text}</div>))}
+        {ui.msgs.slice(-5).map((m, i) => (<div key={i} style={{ color: '#afc', fontSize: 12, marginBottom: 2, textShadow: '1px 1px 0 #000' }}>{m.text}</div>))}
       </div>
       
-      <div style={{ height: 140, background: 'linear-gradient(180deg, #0c0c14 0%, #1a1a28 100%)', display: 'flex', borderTop: '2px solid #333' }}>
-        <div style={{ width: 210, padding: 5, borderRight: '1px solid #333' }}>
-          <canvas ref={minimapRef} onClick={handleMinimapClick} onContextMenu={handleMinimapClick} style={{ width: 200, height: 130, border: '1px solid #444', cursor: 'pointer' }} />
-        </div>
+      {/* HUD Bottom Panel */}
+      <div style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: 160, background: '#181818', borderTop: '2px solid #444', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         
-        <div style={{ width: 180, padding: 8, borderRight: '1px solid #333' }}>
-          {ui.sel.length > 0 && (
-            <>
-              <div style={{ color: '#fff', fontSize: 12, marginBottom: 4 }}>{ui.sel.length === 1 ? ui.sel[0].type.toUpperCase() : `${ui.sel.length} UNITS`}</div>
-              {ui.sel.length === 1 && (
-                <>
-                  <div style={{ fontSize: 10, color: '#888' }}>HP: {Math.floor(ui.sel[0].hp)}/{ui.sel[0].maxHp}{ui.sel[0].maxSh > 0 && ` | SH: ${Math.floor(ui.sel[0].sh)}`}</div>
-                  {ui.sel[0].maxE > 0 && <div style={{ fontSize: 10, color: '#a4f' }}>E: {Math.floor(ui.sel[0].energy)}/{ui.sel[0].maxE}</div>}
-                  {ui.sel[0].dmg > 0 && <div style={{ fontSize: 10, color: '#f88' }}>DMG: {ui.sel[0].dmg} | RNG: {Math.floor(ui.sel[0].rng / T)}</div>}
-                  {ui.sel[0].cmdQueue?.length > 0 && <div style={{ fontSize: 9, color: '#8cf' }}>Queued: {ui.sel[0].cmdQueue.length}</div>}
-                </>
-              )}
-              {/* Production queue */}
-              {ui.prodQueue.length > 0 && (
-                <div style={{ marginTop: 6 }}>
-                  <div style={{ fontSize: 9, color: '#666', marginBottom: 2 }}>COLA:</div>
-                  <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                    {ui.prodQueue.map((u, i) => (
-                      <div key={i} onClick={() => gameRef.current?.cancelProd(gameRef.current.selected[0], i)} style={{ width: 20, height: 20, background: i === 0 ? '#454' : '#223', border: '1px solid #555', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, cursor: 'pointer' }} title="Click para cancelar">
-                        {UNITS[u]?.icon || '?'}
+        <div style={{ width: 1000, height: '100%', display: 'flex', background: '#1a1a20', boxShadow: '0 0 20px #000' }}>
+
+          {/* Minimap */}
+          <div style={{ width: 160, height: 160, padding: 5, background: '#111', borderRight: '1px solid #333' }}>
+             <canvas ref={minimapRef} onClick={handleMinimapClick} onContextMenu={handleMinimapClick} style={{ width: 150, height: 150, border: '1px solid #555', cursor: 'pointer', background: '#000' }} />
+          </div>
+
+          {/* Center Info Panel */}
+          <div style={{ flex: 1, padding: 10, display: 'flex', gap: 10, justifyContent: 'center', alignItems: 'center', background: '#15151a' }}>
+             {ui.sel.length === 1 ? (
+                <div style={{ display: 'flex', gap: 15, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
+                   {/* Portrait Placeholder */}
+                   <div style={{ width: 100, height: 100, background: '#000', border: `2px solid ${ui.sel[0].team === 0 ? raceD.c : '#f44'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40 }}>
+                      {UNITS[ui.sel[0].type]?.icon || BUILDINGS[ui.sel[0].type]?.icon}
+                   </div>
+                   {/* Stats */}
+                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 180 }}>
+                      <div style={{ color: '#fff', fontWeight: 'bold', fontSize: 14 }}>{ui.sel[0].type.toUpperCase()}</div>
+                      <div style={{ fontSize: 11, color: '#aaa' }}>kills: {0}</div>
+
+                      <div style={{ width: '100%', height: 14, background: '#333', border: '1px solid #555', position: 'relative' }}>
+                         <div style={{ width: `${(ui.sel[0].hp/ui.sel[0].maxHp)*100}%`, height: '100%', background: ui.sel[0].hp/ui.sel[0].maxHp < 0.3 ? '#f44' : '#2d2' }}></div>
+                         <span style={{ position: 'absolute', top: 0, left: 4, fontSize: 10, color: '#fff', textShadow: '1px 1px 0 #000' }}>{Math.floor(ui.sel[0].hp)}/{ui.sel[0].maxHp}</span>
                       </div>
-                    ))}
-                  </div>
+
+                      {ui.sel[0].maxSh > 0 && (
+                         <div style={{ width: '100%', height: 14, background: '#333', border: '1px solid #555', position: 'relative' }}>
+                             <div style={{ width: `${(ui.sel[0].sh/ui.sel[0].maxSh)*100}%`, height: '100%', background: '#4af' }}></div>
+                             <span style={{ position: 'absolute', top: 0, left: 4, fontSize: 10, color: '#fff', textShadow: '1px 1px 0 #000' }}>{Math.floor(ui.sel[0].sh)}/{ui.sel[0].maxSh}</span>
+                         </div>
+                      )}
+
+                      {ui.sel[0].maxE > 0 && (
+                         <div style={{ width: '100%', height: 14, background: '#333', border: '1px solid #555', position: 'relative' }}>
+                             <div style={{ width: `${(ui.sel[0].energy/ui.sel[0].maxE)*100}%`, height: '100%', background: '#a4f' }}></div>
+                             <span style={{ position: 'absolute', top: 0, left: 4, fontSize: 10, color: '#fff', textShadow: '1px 1px 0 #000' }}>{Math.floor(ui.sel[0].energy)}/{ui.sel[0].maxE}</span>
+                         </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: 10, fontSize: 11, marginTop: 4 }}>
+                          {ui.sel[0].dmg > 0 && <span>⚔️ {ui.sel[0].dmg}</span>}
+                          <span>🛡️ {ui.sel[0].ar}</span>
+                      </div>
+                   </div>
+
+                   {/* Queue */}
+                   {ui.prodQueue.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginLeft: 10 }}>
+                         <div style={{ fontSize: 10, color: '#888' }}>Queued</div>
+                         {ui.prodQueue.map((u, i) => (
+                            <div key={i} style={{ fontSize: 10, color: '#ccc' }}>{i+1}. {u}</div>
+                         ))}
+                      </div>
+                   )}
                 </div>
-              )}
-            </>
-          )}
-        </div>
-        
-        <div style={{ flex: 1, padding: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {ui.abilities.length > 0 && (
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {ui.abilities.map(ab => (
-                <button key={ab.k} onClick={() => { if (ab.ready && ab.hasE) { if (ab.target) setUi(p => ({ ...p, abMode: ab.k })); else gameRef.current?.cmd('ability', { ab: ab.k }); } }} disabled={!ab.ready || !ab.hasE} title={ab.desc} style={{ padding: '4px 8px', fontSize: 10, background: ui.abMode === ab.k ? '#458' : (ab.ready && ab.hasE ? '#235' : '#111'), border: `1px solid ${ab.ready && ab.hasE ? '#48a' : '#333'}`, borderRadius: 4, color: ab.ready && ab.hasE ? '#8cf' : '#555', cursor: ab.ready && ab.hasE ? 'pointer' : 'not-allowed' }}>
-                  <span style={{ color: '#ff0', marginRight: 3 }}>[{ab.k}]</span>{ab.n}
-                </button>
-              ))}
-            </div>
-          )}
+             ) : ui.sel.length > 1 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, width: 300, alignContent: 'center', justifyContent: 'center' }}>
+                   {ui.sel.slice(0, 24).map((e, i) => (
+                      <div key={i} style={{ width: 24, height: 24, background: e.hp/e.maxHp < 0.4 ? '#622' : '#242', border: `1px solid ${e.hp/e.maxHp < 0.4 ? '#f44' : '#4f4'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                         {UNITS[e.type]?.icon || '•'}
+                      </div>
+                   ))}
+                </div>
+             ) : (
+                <div style={{ color: '#444', fontStyle: 'italic' }}>No Selection</div>
+             )}
+          </div>
           
-          {ui.sel.some(e => e.canBuild) && (
-            <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-              {getAvailBuildings().slice(0, 12).map(b => (
-                <button key={b.key} onClick={() => setUi(p => ({ ...p, buildMode: b.key }))} disabled={ui.res.m < b.c.m || ui.res.g < (b.c.g || 0)} style={{ padding: '3px 6px', fontSize: 9, background: ui.buildMode === b.key ? '#454' : (ui.res.m >= b.c.m && ui.res.g >= (b.c.g || 0) ? '#222' : '#111'), border: `1px solid ${ui.buildMode === b.key ? '#6a6' : '#444'}`, borderRadius: 3, color: ui.res.m >= b.c.m && ui.res.g >= (b.c.g || 0) ? '#fff' : '#555', cursor: ui.res.m >= b.c.m && ui.res.g >= (b.c.g || 0) ? 'pointer' : 'not-allowed' }}>
-                  {b.icon} {b.key.slice(0, 8)} ({b.c.m}{b.c.g > 0 && `/${b.c.g}`})
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Command Card */}
+          <div style={{ width: 180, padding: 8, background: '#111', borderLeft: '1px solid #333' }}>
+             {renderCommandCard()}
+          </div>
           
-          {getProdUnits().length > 0 && (
-            <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-              {getProdUnits().map(u => {
-                const ok = ui.res.m >= u.c.m && ui.res.g >= (u.c.g || 0) && ui.res.sup + (u.sup || 0) <= ui.res.maxSup;
-                return (
-                  <button key={u.key} onClick={() => gameRef.current?.cmd('produce', { unit: u.key })} disabled={!ok} style={{ padding: '3px 6px', fontSize: 9, background: ok ? '#223' : '#111', border: `1px solid ${ok ? '#446' : '#333'}`, borderRadius: 3, color: ok ? '#aaf' : '#555', cursor: ok ? 'pointer' : 'not-allowed' }}>
-                    {u.icon} [{u.hk}] {u.key.slice(0, 7)} ({u.c.m}{u.c.g > 0 && `/${u.c.g}`}) ⬆{u.sup || 0}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        
-        <div style={{ width: 90, padding: 8, borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <button onClick={() => gameRef.current?.cmd('stop', {})} style={{ padding: '4px', fontSize: 10, background: '#222', border: '1px solid #444', borderRadius: 3, color: '#fff', cursor: 'pointer' }}>[S] Stop</button>
-          <button onClick={() => gameRef.current?.cmd('hold', {})} style={{ padding: '4px', fontSize: 10, background: '#222', border: '1px solid #444', borderRadius: 3, color: '#fff', cursor: 'pointer' }}>[H] Hold</button>
-          <button onClick={() => gameRef.current?.selectAll()} style={{ padding: '4px', fontSize: 10, background: '#222', border: '1px solid #444', borderRadius: 3, color: '#fff', cursor: 'pointer' }}>Select All</button>
         </div>
       </div>
     </div>
