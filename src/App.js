@@ -111,6 +111,24 @@ const BUILDINGS = {
 // ═══════════════════════════════════════════════════════════════
 // ABILITIES
 // ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+// UPGRADES
+// ═══════════════════════════════════════════════════════════════
+const UPGRADES = {
+  // Terran
+  terran_inf_wep: { n:'Infantry Weapons', c:{m:100,g:100}, bt:60, max:3, at:'engineeringbay', race:'terran', icon:'🔫' },
+  terran_inf_arm: { n:'Infantry Armor', c:{m:100,g:100}, bt:60, max:3, at:'engineeringbay', race:'terran', icon:'🛡️' },
+  // Protoss
+  protoss_gnd_wep: { n:'Ground Weapons', c:{m:100,g:100}, bt:60, max:3, at:'forge', race:'protoss', icon:'⚔️' },
+  protoss_gnd_arm: { n:'Ground Armor', c:{m:100,g:100}, bt:60, max:3, at:'forge', race:'protoss', icon:'🛡️' },
+  protoss_sh:      { n:'Shields', c:{m:150,g:150}, bt:60, max:3, at:'forge', race:'protoss', icon:'🔵' },
+  // Zerg
+  zerg_mel_atk: { n:'Melee Attacks', c:{m:100,g:100}, bt:60, max:3, at:'evolutionchamber', race:'zerg', icon:'🦷' },
+  zerg_mis_atk: { n:'Missile Attacks', c:{m:100,g:100}, bt:60, max:3, at:'evolutionchamber', race:'zerg', icon:'🏹' },
+  zerg_carapace: { n:'Ground Carapace', c:{m:150,g:150}, bt:60, max:3, at:'evolutionchamber', race:'zerg', icon:'🦀' },
+};
+
 const ABILITIES = {
   blink: { n:'Blink', k:'B', cd:7000, range:8, target:'ground', desc:'Teleporte' },
   stim: { n:'Stimpack', k:'T', cd:0, hpCost:10, dur:11000, atkBonus:1.5, spdBonus:1.5, desc:'+50% velocidad' },
@@ -289,7 +307,10 @@ class FX {
         case 'move': ctx.strokeStyle = '#0f0'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, sy, (e.r || 15) * (1 - prog * 0.5) * z, 0, Math.PI * 2); ctx.stroke(); break;
         case 'attack': ctx.strokeStyle = '#f44'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx - 8 * z, sy - 8 * z); ctx.lineTo(sx + 8 * z, sy + 8 * z); ctx.moveTo(sx + 8 * z, sy - 8 * z); ctx.lineTo(sx - 8 * z, sy + 8 * z); ctx.stroke(); break;
         case 'warp': ctx.strokeStyle = '#4af'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(sx, sy, (e.r || 20) * z, 0, Math.PI * 2); ctx.stroke(); break;
-        case 'build': ctx.strokeStyle = '#8f8'; ctx.lineWidth = 2; ctx.strokeRect(sx - e.sz * z, sy - e.sz * z, e.sz * 2 * z, e.sz * 2 * z); break;
+        case 'repair':
+        for (const e of sel) { if (e.type === 'scv') e.repairing = data.target; }
+        break;
+      case 'build': ctx.strokeStyle = '#8f8'; ctx.lineWidth = 2; ctx.strokeRect(sx - e.sz * z, sy - e.sz * z, e.sz * 2 * z, e.sz * 2 * z); break;
       }
       ctx.globalAlpha = 1;
     }
@@ -315,6 +336,8 @@ class Game {
     this.groups = {};
     this.buildings = new Set();
     this.aiBuildings = new Set();
+    this.upgrades = {};
+    this.aiUpgrades = {};
     
     this.buildQueue = []; // Cola de construcciones player [{workerId, type, x, y, building}]
     this.aiBuildQueue = [];
@@ -397,7 +420,7 @@ class Game {
       canHarvest: data.harvest || false,
       canBuild: data.build || false,
       fly: data.fly || false,
-      sieged: false,
+      sieged: false, unpowered: false,
       
       proj: data.proj || null, projSpd: 15 * T,
       splash: data.splash || 0, hits: data.hits || 1,
@@ -519,6 +542,9 @@ class Game {
       case 'attack':
         e.target = cmd.target;
         break;
+      case 'repair':
+        for (const e of sel) { if (e.type === 'scv') e.repairing = data.target; }
+        break;
       case 'build':
         this.queueBuild(e, cmd.buildType, cmd.x, cmd.y, e.team, true);
         break;
@@ -555,9 +581,23 @@ class Game {
   }
   
   updateEntity(e, dt) {
-    // Energy/shield regen
-    if (e.maxE > 0 && e.energy < e.maxE) e.energy = Math.min(e.maxE, e.energy + 0.5625 * dt / 1000);
-    if (e.sh < e.maxSh && this.time - e.lastHit > 10000) e.sh = Math.min(e.maxSh, e.sh + 2 * dt / 1000);
+    // Zerg Regen
+    if (e.r === 'zerg' && e.hp < e.maxHp && e.built >= 1 && e.hp > 0) {
+        e.hp = Math.min(e.maxHp, e.hp + 0.5 * dt / 1000);
+    }
+
+    // Power Check (Protoss)
+    if (e.isBuilding && BUILDINGS[e.type]?.needPower) {
+      const pylons = this.entities.filter(p => p.team === e.team && p.type === 'pylon' && p.built >= 1);
+      const hasPower = pylons.some(p => Math.sqrt((p.x - e.x) ** 2 + (p.y - e.y) ** 2) < BUILDINGS.pylon.power * T);
+      e.unpowered = !hasPower;
+    }
+
+    // Energy/shield regen (Paused if unpowered)
+    if (!e.unpowered) {
+      if (e.maxE > 0 && e.energy < e.maxE) e.energy = Math.min(e.maxE, e.energy + 0.5625 * dt / 1000);
+      if (e.sh < e.maxSh && this.time - e.lastHit > 10000) e.sh = Math.min(e.maxSh, e.sh + 2 * dt / 1000);
+    }
     
     // Building construction
     if (e.isBuilding && e.built < 1) {
@@ -589,22 +629,37 @@ class Game {
       return;
     }
     
-    // Production queue
-    if (e.producing && this.time >= e.prodEnd) {
-      const ud = UNITS[e.producing];
-      if (ud) {
-        const count = ud.spawn || 1;
-        for (let i = 0; i < count; i++) {
-          const u = this.spawn(e.producing, e.x + (Math.random() - 0.5) * 30, e.y + e.sz + 10 + i * 10, e.team);
-          if (e.rally && u) {
-            u.path = findPath(this.map.grid, u.x, u.y, e.rally.x, e.rally.y);
-            u.pathIdx = 0;
-          }
+    // Production & Research queue
+    if (e.producing) {
+      if (e.unpowered) {
+        e.prodEnd += dt; // Pause production
+      } else if (this.time >= e.prodEnd) {
+        if (e.isResearching) {
+            const techKey = e.producing;
+            if (e.team === 0) {
+                this.upgrades[techKey] = (this.upgrades[techKey] || 0) + 1;
+                this.msg(`${UPGRADES[techKey].n} completado`);
+            } else {
+                this.aiUpgrades[techKey] = (this.aiUpgrades[techKey] || 0) + 1;
+            }
+            e.isResearching = false;
+        } else {
+            const ud = UNITS[e.producing];
+            if (ud) {
+                const count = ud.spawn || 1;
+                for (let i = 0; i < count; i++) {
+                    const u = this.spawn(e.producing, e.x + (Math.random() - 0.5) * 30, e.y + e.sz + 10 + i * 10, e.team);
+                    if (e.rally && u) {
+                        u.path = findPath(this.map.grid, u.x, u.y, e.rally.x, e.rally.y);
+                        u.pathIdx = 0;
+                    }
+                }
+            }
         }
         audio.play('complete');
+        e.producing = null;
+        if (e.prodQueue.length > 0) this.startProdInternal(e, e.prodQueue.shift(), e.team);
       }
-      e.producing = null;
-      if (e.prodQueue.length > 0) this.startProdInternal(e, e.prodQueue.shift(), e.team);
     }
     
     // Buffs
@@ -612,8 +667,30 @@ class Game {
     let spdMult = 1, atkMult = 1;
     for (const b of e.buffs) { if (b.spd) spdMult *= b.spd; if (b.atk) atkMult *= b.atk; }
     
+    // Repair (Terran SCV)
+    if (e.repairing) {
+        const t = e.repairing;
+        if (t.hp >= t.maxHp || t.hp <= 0) { e.repairing = null; return; }
+        const dist = Math.sqrt((t.x - e.x)**2 + (t.y - e.y)**2);
+        if (dist <= 35) {
+            const healRate = 10 * dt / 1000;
+            const costM = healRate * 0.5;
+            const res = e.team === 0 ? this.res : this.aiRes;
+            if (res.m >= costM) {
+                res.m -= costM;
+                t.hp = Math.min(t.maxHp, t.hp + healRate);
+                this.fx.addFx('build', e.x + (t.x-e.x)/2, e.y + (t.y-e.y)/2, { sz: 5, dur: 100 });
+            } else {
+                e.repairing = null;
+            }
+        } else if (e.path.length === 0) {
+            e.path = findPath(this.map.grid, e.x, e.y, t.x, t.y);
+            e.pathIdx = 0;
+        }
+    }
+
     // Movement
-    if (!e.isBuilding && !e.hold && !e.sieged && !e.constructing && e.path.length > 0) {
+    if (!e.isBuilding && !e.hold && !e.sieged && !e.constructing && !e.repairing && e.path.length > 0) {
       const t = e.path[e.pathIdx];
       if (t) {
         const dx = t.x - e.x, dy = t.y - e.y, dist = Math.sqrt(dx * dx + dy * dy);
@@ -777,8 +854,36 @@ class Game {
     }
   }
   
+
+  getUpgradeLevel(team, key) {
+    return (team === 0 ? this.upgrades[key] : this.aiUpgrades[key]) || 0;
+  }
+
+  getUnitUpgrades(u) {
+    const ups = { atk: 0, arm: 0, sh: 0 };
+    const team = u.team;
+    if (u.r === 'terran') {
+      if (['marine','marauder','reaper','ghost','scv'].includes(u.type)) {
+        ups.atk = this.getUpgradeLevel(team, 'terran_inf_wep');
+        ups.arm = this.getUpgradeLevel(team, 'terran_inf_arm');
+      }
+    } else if (u.r === 'protoss') {
+      if (!u.fly) {
+        ups.atk = this.getUpgradeLevel(team, 'protoss_gnd_wep');
+        ups.arm = this.getUpgradeLevel(team, 'protoss_gnd_arm');
+      }
+      ups.sh = this.getUpgradeLevel(team, 'protoss_sh');
+    } else if (u.r === 'zerg') {
+      if (['zergling','ultralisk','broodling'].includes(u.type)) ups.atk = this.getUpgradeLevel(team, 'zerg_mel_atk');
+      else ups.atk = this.getUpgradeLevel(team, 'zerg_mis_atk');
+      ups.arm = this.getUpgradeLevel(team, 'zerg_carapace');
+    }
+    return ups;
+  }
+
   attack(a, t) {
-    let dmg = a.dmg * (a.hits || 1);
+    const ups = this.getUnitUpgrades(a);
+    let dmg = (a.dmg + ups.atk) * (a.hits || 1);
     if (a.dmgB?.armored && t.sz > 18) dmg += a.dmgB.armored * (a.hits || 1);
     if (a.dmgB?.light && t.sz < 14) dmg += a.dmgB.light * (a.hits || 1);
     
@@ -792,9 +897,22 @@ class Game {
   }
   
   applyDmg(t, dmg, p = {}) {
-    let d = Math.max(0.5, dmg - (t.ar || 0));
-    if (t.sh > 0) { const sd = Math.min(t.sh, d); t.sh -= sd; d -= sd; }
-    t.hp -= d;
+    const ups = this.getUnitUpgrades(t);
+    let d = Math.max(0.5, dmg - (t.ar || 0) - ups.arm);
+
+    if (t.sh > 0) {
+      const sArm = (t.r === 'protoss' ? ups.sh : 0);
+      const sDmg = Math.max(0.5, dmg - sArm);
+      const taken = Math.min(t.sh, sDmg);
+      t.sh -= taken;
+      if (taken < sDmg) {
+         d = Math.max(0.5, (dmg - taken) - (t.ar || 0) - ups.arm);
+      } else {
+         d = 0;
+      }
+    }
+
+    if (d > 0) t.hp -= d;
     t.lastHit = this.time;
     
     if (p.splash > 0) {
@@ -802,9 +920,21 @@ class Game {
         if (o !== t && o.team !== p.team && o.hp > 0) {
           const dist = Math.sqrt((o.x - p.x) ** 2 + (o.y - p.y) ** 2);
           if (dist <= p.splash) {
-            let sd = Math.max(0.5, dmg * 0.5 - (o.ar || 0));
-            if (o.sh > 0) { const ss = Math.min(o.sh, sd); o.sh -= ss; sd -= ss; }
-            o.hp -= sd;
+             const sUps = this.getUnitUpgrades(o);
+             let sBase = dmg * 0.5;
+             let sd = Math.max(0.5, sBase - (o.ar || 0) - sUps.arm);
+             if (o.sh > 0) {
+                 const ssArm = (o.r === 'protoss' ? sUps.sh : 0);
+                 const ssDmg = Math.max(0.5, sBase - ssArm);
+                 const ssTaken = Math.min(o.sh, ssDmg);
+                 o.sh -= ssTaken;
+                 if (ssTaken < ssDmg) {
+                    sd = Math.max(0.5, (sBase - ssTaken) - (o.ar || 0) - sUps.arm);
+                 } else {
+                    sd = 0;
+                 }
+             }
+             if (sd > 0) o.hp -= sd;
           }
         }
       }
@@ -915,6 +1045,9 @@ class Game {
         audio.play('move');
         break;
         
+      case 'repair':
+        for (const e of sel) { if (e.type === 'scv') e.repairing = data.target; }
+        break;
       case 'build':
         const builder = sel.find(e => e.canBuild && !e.constructing);
         if (builder) {
@@ -927,6 +1060,12 @@ class Game {
         break;
         
       case 'produce':
+        this.startProd(sel[0], data.unit);
+        break;
+      case 'research':
+        this.startResearch(sel[0], data.tech);
+        break;
+      case 'produce_dummy':
         this.startProd(sel[0], data.unit);
         break;
         
@@ -1032,6 +1171,41 @@ class Game {
     return true;
   }
   
+    startResearch(building, techKey) {
+    if (!building?.isBuilding) return false;
+    const tech = UPGRADES[techKey];
+    if (!tech || tech.at !== building.type) return false;
+
+    const team = building.team;
+    const currentLvl = (team === 0 ? this.upgrades[techKey] : this.aiUpgrades[techKey]) || 0;
+    if (currentLvl >= tech.max) return false;
+
+    const costM = tech.c.m + currentLvl * 50;
+    const costG = tech.c.g + currentLvl * 50;
+
+    const res = team === 0 ? this.res : this.aiRes;
+
+    if (res.m < costM || res.g < costG) {
+      if (team === 0) { audio.play('error'); this.msg('Recursos insuficientes'); }
+      return false;
+    }
+
+    res.m -= costM;
+    res.g -= costG;
+
+    if (building.producing) {
+        if (team === 0) { audio.play('error'); this.msg('Ocupado'); }
+        return false;
+    }
+
+    building.producing = techKey;
+    building.isResearching = true;
+    building.prodEnd = this.time + tech.bt * 1000;
+
+    if (team === 0) audio.play('select');
+    return true;
+  }
+
   cancelProd(building, index) {
     if (!building) return;
     const res = building.team === 0 ? this.res : this.aiRes;
@@ -1377,11 +1551,12 @@ class Game {
 // RENDER HELPERS
 // ═══════════════════════════════════════════════════════════════
 const drawEntity = (ctx, e, sx, sy, z, raceD, isAlly, time) => {
+  const unp = e.unpowered;
   const sz = e.sz * z;
-  const color = isAlly ? raceD.c : '#e44';
-  const darker = isAlly ? raceD.d : '#822';
-  const lighter = isAlly ? raceD.l : '#faa';
-
+  const color = unp ? '#555' : (isAlly ? raceD.c : '#e44');
+  const darker = unp ? '#333' : (isAlly ? raceD.d : '#822');
+  const lighter = unp ? '#777' : (isAlly ? raceD.l : '#faa');
+  const lighter = unp ? '#777' : (isAlly ? raceD.l : '#faa');
   // Selection
   if (e.sel) {
     ctx.strokeStyle = '#0f0'; ctx.lineWidth = 1;
@@ -1428,8 +1603,14 @@ const drawEntity = (ctx, e, sx, sy, z, raceD, isAlly, time) => {
       ctx.shadowBlur = 10 * z; ctx.shadowColor = color;
       ctx.fillStyle = darker; ctx.beginPath(); ctx.arc(sx, sy, sz, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.fillStyle = '#eda'; ctx.beginPath(); ctx.arc(sx, sy, sz * 0.7, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#4af'; ctx.beginPath(); ctx.arc(sx, sy, sz * 0.3, 0, Math.PI * 2); ctx.fill();
+      if (!unp) {
+        ctx.fillStyle = '#eda'; ctx.beginPath(); ctx.arc(sx, sy, sz * 0.7, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#4af'; ctx.beginPath(); ctx.arc(sx, sy, sz * 0.3, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = '#555'; ctx.beginPath(); ctx.arc(sx, sy, sz * 0.7, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#f00'; ctx.lineWidth = 2*z;
+        ctx.beginPath(); ctx.moveTo(sx-6*z, sy-6*z); ctx.lineTo(sx+6*z, sy+6*z); ctx.moveTo(sx+6*z, sy-6*z); ctx.lineTo(sx-6*z, sy+6*z); ctx.stroke();
+      }
     } else { // Zerg
       ctx.fillStyle = darker; ctx.beginPath(); ctx.ellipse(sx, sy, sz, sz * 0.9, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(sx, sy - sz * 0.2, sz * 0.6, sz * 0.5, 0, 0, Math.PI * 2); ctx.fill();
@@ -1497,6 +1678,12 @@ const drawEntity = (ctx, e, sx, sy, z, raceD, isAlly, time) => {
     }
 
     ctx.restore();
+
+    // Worker resource visual
+    if (e.canHarvest && e.returning) {
+       ctx.fillStyle = e.harvesting?.isGeyser ? '#4f4' : '#4af';
+       ctx.beginPath(); ctx.arc(sx + 6*z, sy + 6*z, 4*z, 0, Math.PI*2); ctx.fill();
+    }
 
     // Stim effect
     if (e.buffs.some(b => b.type === 'stim')) {
@@ -1872,6 +2059,7 @@ export default function RTSGame() {
     if (click.type === 'mineral' || click.type === 'geyser') gameRef.current.cmd('harvest', { resource: click.resource }, e.shiftKey);
     else if (click.type === 'entity') {
       if (click.entity.team === 1) gameRef.current.cmd('attack', { target: click.entity }, e.shiftKey);
+      else if (gameRef.current.selected.some(s => s.type === 'scv') && click.entity.hp < click.entity.maxHp) gameRef.current.cmd('repair', { target: click.entity }, e.shiftKey);
       else if (click.entity.isBuilding) gameRef.current.cmd('rally', { x: click.entity.x, y: click.entity.y });
     } else {
       if (keysRef.current['a']) gameRef.current.cmd('attackMove', { x, y }, e.shiftKey);
@@ -1954,6 +2142,17 @@ export default function RTSGame() {
     return Object.entries(BUILDINGS).filter(([k, v]) => v.r === gameRef.current.race && !v.addon).map(([k, v]) => ({ key: k, ...v }));
   };
 
+  const getAvailUpgrades = () => {
+    if (!gameRef.current || ui.sel.length === 0) return [];
+    const b = ui.sel.find(e => e.isBuilding);
+    if (!b) return [];
+    return Object.entries(UPGRADES).filter(([k,v]) => v.at === b.type && v.race === gameRef.current.race)
+      .map(([k,v]) => {
+          const curlvl = gameRef.current.upgrades[k] || 0;
+          return { key: k, ...v, lvl: curlvl, cost: { m: v.c.m + curlvl*50, g: v.c.g + curlvl*50 } };
+      });
+  };
+
   const getProdUnits = () => {
     if (!gameRef.current || ui.sel.length === 0) return [];
     const b = ui.sel.find(e => e.isBuilding && BUILDINGS[e.type]?.prod);
@@ -2029,8 +2228,12 @@ export default function RTSGame() {
       slots.push({ k: u.hk, n: u.key, fn: () => gameRef.current?.cmd('produce', { unit: u.key }), icon: u.icon, disabled: !ok, cost: u.c, sup: u.sup });
     });
 
-    const grid = Array(12).fill(null).map((_, i) => slots[i] || null);
+    getAvailUpgrades().forEach(u => {
+        const ok = ui.res.m >= u.cost.m && ui.res.g >= u.cost.g && u.lvl < u.max;
+        slots.push({ k: '', n: `${u.n} ${u.lvl+1}`, fn: () => gameRef.current?.cmd('research', { tech: u.key }), icon: u.icon, disabled: !ok || u.lvl >= u.max, cost: u.cost });
+    });
 
+    const grid = Array(12).fill(null).map((_, i) => slots[i] || null);
     return (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gridTemplateRows: 'repeat(3, 1fr)', gap: 3, height: '100%' }}>
         {grid.map((s, i) => (
@@ -2048,6 +2251,7 @@ export default function RTSGame() {
       </div>
     );
   };
+
 
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#000', overflow: 'hidden', fontFamily: 'system-ui', userSelect: 'none', color: '#ccc' }}>

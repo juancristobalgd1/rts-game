@@ -1,0 +1,93 @@
+
+> rts-starcraft-game@1.0.0 start
+> react-scripts start
+
+(node:9127) [DEP_WEBPACK_DEV_SERVER_ON_AFTER_SETUP_MIDDLEWARE] DeprecationWarning: 'onAfterSetupMiddleware' option is deprecated. Please use the 'setupMiddlewares' option.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:9127) [DEP_WEBPACK_DEV_SERVER_ON_BEFORE_SETUP_MIDDLEWARE] DeprecationWarning: 'onBeforeSetupMiddleware' option is deprecated. Please use the 'setupMiddlewares' option.
+Starting the development server...
+
+Compiled successfully!
+
+You can now view rts-starcraft-game in the browser.
+
+  Local:            http://localhost:3000
+  On Your Network:  http://192.168.0.2:3000
+
+Note that the development build is not optimized.
+To create a production build, use npm run build.
+
+webpack compiled successfully
+Compiling...
+Failed to compile.
+
+[eslint]
+src/App.js
+Syntax error: Identifier 'lighter' has already been declared. (1559:8) (1559:8)
+ERROR in ./src/App.js
+Module build failed (from ./node_modules/babel-loader/lib/index.js):
+SyntaxError: /app/src/App.js: Identifier 'lighter' has already been declared. (1559:8)
+
+  1557 |   const darker = unp ? '#333' : (isAlly ? raceD.d : '#822');
+  1558 |   const lighter = unp ? '#777' : (isAlly ? raceD.l : '#faa');
+> 1559 |   const lighter = unp ? '#777' : (isAlly ? raceD.l : '#faa');
+       |         ^
+  1560 |   // Selection
+  1561 |   if (e.sel) {
+  1562 |     ctx.strokeStyle = '#0f0'; ctx.lineWidth = 1;
+    at constructor (/app/node_modules/@babel/parser/lib/index.js:365:19)
+    at FlowParserMixin.raise (/app/node_modules/@babel/parser/lib/index.js:6599:19)
+    at FlowScopeHandler.checkRedeclarationInScope (/app/node_modules/@babel/parser/lib/index.js:1619:19)
+    at FlowScopeHandler.declareName (/app/node_modules/@babel/parser/lib/index.js:1585:12)
+    at FlowScopeHandler.declareName (/app/node_modules/@babel/parser/lib/index.js:1686:11)
+    at FlowParserMixin.declareNameFromIdentifier (/app/node_modules/@babel/parser/lib/index.js:7567:16)
+    at FlowParserMixin.checkIdentifier (/app/node_modules/@babel/parser/lib/index.js:7563:12)
+    at FlowParserMixin.checkLVal (/app/node_modules/@babel/parser/lib/index.js:7500:12)
+    at FlowParserMixin.parseVarId (/app/node_modules/@babel/parser/lib/index.js:13402:10)
+    at FlowParserMixin.parseVarId (/app/node_modules/@babel/parser/lib/index.js:3474:11)
+    at FlowParserMixin.parseVar (/app/node_modules/@babel/parser/lib/index.js:13373:12)
+    at FlowParserMixin.parseVarStatement (/app/node_modules/@babel/parser/lib/index.js:13220:10)
+    at FlowParserMixin.parseStatementContent (/app/node_modules/@babel/parser/lib/index.js:12841:23)
+    at FlowParserMixin.parseStatementLike (/app/node_modules/@babel/parser/lib/index.js:12757:17)
+    at FlowParserMixin.parseStatementLike (/app/node_modules/@babel/parser/lib/index.js:2918:24)
+    at FlowParserMixin.parseStatementListItem (/app/node_modules/@babel/parser/lib/index.js:12737:17)
+    at FlowParserMixin.parseBlockOrModuleBlockBody (/app/node_modules/@babel/parser/lib/index.js:13306:61)
+    at FlowParserMixin.parseBlockBody (/app/node_modules/@babel/parser/lib/index.js:13299:10)
+    at FlowParserMixin.parseBlock (/app/node_modules/@babel/parser/lib/index.js:13287:10)
+    at FlowParserMixin.parseFunctionBody (/app/node_modules/@babel/parser/lib/index.js:12090:24)
+    at /app/node_modules/@babel/parser/lib/index.js:2892:63
+    at FlowParserMixin.forwardNoArrowParamsConversionAt (/app/node_modules/@babel/parser/lib/index.js:3068:16)
+    at FlowParserMixin.parseFunctionBody (/app/node_modules/@babel/parser/lib/index.js:2892:12)
+    at FlowParserMixin.parseArrowExpression (/app/node_modules/@babel/parser/lib/index.js:12065:10)
+    at FlowParserMixin.parseParenAndDistinguishExpression (/app/node_modules/@babel/parser/lib/index.js:11677:12)
+    at FlowParserMixin.parseParenAndDistinguishExpression (/app/node_modules/@babel/parser/lib/index.js:3591:18)
+    at FlowParserMixin.parseExprAtom (/app/node_modules/@babel/parser/lib/index.js:11321:23)
+    at FlowParserMixin.parseExprAtom (/app/node_modules/@babel/parser/lib/index.js:4764:20)
+    at FlowParserMixin.parseExprSubscripts (/app/node_modules/@babel/parser/lib/index.js:11071:23)
+    at FlowParserMixin.parseUpdate (/app/node_modules/@babel/parser/lib/index.js:11056:21)
+    at FlowParserMixin.parseMaybeUnary (/app/node_modules/@babel/parser/lib/index.js:11036:23)
+    at FlowParserMixin.parseMaybeUnaryOrPrivate (/app/node_modules/@babel/parser/lib/index.js:10889:61)
+    at FlowParserMixin.parseExprOps (/app/node_modules/@babel/parser/lib/index.js:10894:23)
+    at FlowParserMixin.parseMaybeConditional (/app/node_modules/@babel/parser/lib/index.js:10871:23)
+    at FlowParserMixin.parseMaybeAssign (/app/node_modules/@babel/parser/lib/index.js:10821:21)
+    at FlowParserMixin.parseMaybeAssign (/app/node_modules/@babel/parser/lib/index.js:3549:18)
+    at /app/node_modules/@babel/parser/lib/index.js:10790:39
+    at FlowParserMixin.allowInAnd (/app/node_modules/@babel/parser/lib/index.js:12411:16)
+    at FlowParserMixin.parseMaybeAssignAllowIn (/app/node_modules/@babel/parser/lib/index.js:10790:17)
+    at FlowParserMixin.parseVar (/app/node_modules/@babel/parser/lib/index.js:13374:91)
+    at FlowParserMixin.parseVarStatement (/app/node_modules/@babel/parser/lib/index.js:13220:10)
+    at FlowParserMixin.parseStatementContent (/app/node_modules/@babel/parser/lib/index.js:12841:23)
+    at FlowParserMixin.parseStatementLike (/app/node_modules/@babel/parser/lib/index.js:12757:17)
+    at FlowParserMixin.parseStatementLike (/app/node_modules/@babel/parser/lib/index.js:2918:24)
+    at FlowParserMixin.parseModuleItem (/app/node_modules/@babel/parser/lib/index.js:12734:17)
+    at FlowParserMixin.parseBlockOrModuleBlockBody (/app/node_modules/@babel/parser/lib/index.js:13306:36)
+    at FlowParserMixin.parseBlockBody (/app/node_modules/@babel/parser/lib/index.js:13299:10)
+    at FlowParserMixin.parseProgram (/app/node_modules/@babel/parser/lib/index.js:12612:10)
+    at FlowParserMixin.parseTopLevel (/app/node_modules/@babel/parser/lib/index.js:12602:25)
+    at FlowParserMixin.parseTopLevel (/app/node_modules/@babel/parser/lib/index.js:3685:28)
+
+ERROR in [eslint]
+src/App.js
+  Line 1559:8:  Parsing error: Identifier 'lighter' has already been declared. (1559:8)
+
+webpack compiled with 2 errors
