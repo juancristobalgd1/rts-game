@@ -1,4 +1,4 @@
-import type { Faction, UnitStats, BuildingStats, Ability } from './types'
+import type { Faction, FactionId, UnitStats, BuildingStats, Ability } from './types'
 
 // Factions with unique characteristics
 export const FACTIONS: Record<string, Faction> = {
