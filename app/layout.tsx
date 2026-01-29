@@ -1,17 +1,5 @@
 import type { Metadata, Viewport } from "next"
-import { Orbitron, Rajdhani } from "next/font/google"
 import "./globals.css"
-
-const orbitron = Orbitron({
-  subsets: ["latin"],
-  variable: "--font-orbitron",
-})
-
-const rajdhani = Rajdhani({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-  variable: "--font-rajdhani",
-})
 
 export const metadata: Metadata = {
   title: "Galactic Conquest | Real-Time Strategy",
@@ -32,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={`${orbitron.variable} ${rajdhani.variable}`}>
+    <html lang="en">
       <body className="font-sans antialiased overflow-hidden">{children}</body>
     </html>
   )
