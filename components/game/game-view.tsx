@@ -3,7 +3,16 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { GameEngine, audio } from "@/lib/game/engine"
 import { FACTIONS, UNITS, BUILDINGS, ABILITIES } from "@/lib/game/factions"
-import { drawEntity, renderEffects, renderMinimap } from "@/lib/game/renderer"
+import {
+  drawEntity,
+  renderEffects,
+  renderMinimap,
+  renderGrid,
+  renderMapObjects,
+  renderFog,
+  toIso,
+  toWorldFromIso
+} from "@/lib/game/renderer"
 import { GameHUD } from "./game-hud"
 import type { FactionId, DifficultyLevel, GameResult, Camera, Entity, Resources } from "@/lib/game/types"
 
@@ -57,9 +66,11 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
     gameRef.current = game
 
     const base = game.map.bases[0]
+    // Center camera on base in Iso space
+    const isoBase = toIso(base.x, base.y)
     camRef.current = {
-      x: base.x - window.innerWidth / 2,
-      y: base.y - (window.innerHeight - 200) / 2,
+      x: isoBase.x - window.innerWidth / 2,
+      y: isoBase.y - (window.innerHeight - 200) / 2,
       zoom: 1,
     }
 
@@ -108,7 +119,7 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
       const cam = camRef.current
       const canvasWidth = canvas.width
       const canvasHeight = canvas.height
-      const camSpeed = (600 * dt) / 1000
+      const camSpeed = (600 * dt) / 1000 / cam.zoom
 
       // Camera movement via keys
       if (keysRef.current["arrowleft"] || keysRef.current["a"]) cam.x -= camSpeed
@@ -124,9 +135,22 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
       if (my < 10) cam.y -= camSpeed
       if (my > canvasHeight - 10 && my < canvasHeight) cam.y += camSpeed
 
-      // Clamp camera
-      cam.x = Math.max(0, Math.min(game.map.width - canvasWidth / cam.zoom, cam.x))
-      cam.y = Math.max(0, Math.min(game.map.height - canvasHeight / cam.zoom, cam.y))
+      // Clamp camera (Iso Bounds)
+      // Map is 3200x2400.
+      // Top corner (0,0) -> Iso(0,0)
+      // Bottom corner (3200, 2400) -> Iso(3200-2400, (3200+2400)/2) = (800, 2800)
+      // Left corner (0, 2400) -> Iso(-2400, 1200)
+      // Right corner (3200, 0) -> Iso(3200, 1600)
+
+      const minIsoX = -game.map.height
+      const maxIsoX = game.map.width
+      const minIsoY = 0
+      const maxIsoY = (game.map.width + game.map.height) / 2
+
+      // Allow some padding
+      const pad = 500
+      cam.x = Math.max(minIsoX - pad, Math.min(maxIsoX + pad - canvasWidth / cam.zoom, cam.x))
+      cam.y = Math.max(minIsoY - pad, Math.min(maxIsoY + pad - canvasHeight / cam.zoom, cam.y))
 
       // Update game
       const result = game.update(dt)
@@ -141,118 +165,47 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
       ctx.fillStyle = "#101018"
       ctx.fillRect(0, 0, canvasWidth, canvasHeight)
 
-      // Grid
-      const gridSize = TILE_SIZE * zoom
-      const offsetX = (-cam.x * zoom) % gridSize
-      const offsetY = (-cam.y * zoom) % gridSize
-      ctx.strokeStyle = "#222222"
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      for (let x = offsetX; x < canvasWidth; x += gridSize) {
-        ctx.moveTo(x, 0)
-        ctx.lineTo(x, canvasHeight)
-      }
-      for (let y = offsetY; y < canvasHeight; y += gridSize) {
-        ctx.moveTo(0, y)
-        ctx.lineTo(canvasWidth, y)
-      }
-      ctx.stroke()
+      // 1. Render Grid
+      renderGrid(ctx, game.map, cam, canvasWidth, canvasHeight)
 
-      // Zerg creep
-      ctx.fillStyle = "#331133"
-      for (const entity of game.entities) {
-        if (entity.isBuilding && entity.built >= 1) {
-          const bd = BUILDINGS[entity.type]
-          if (bd && bd.faction === "zerg") {
-            const cx = (entity.x - cam.x) * zoom
-            const cy = (entity.y - cam.y) * zoom
-            if (cx > -200 && cx < canvasWidth + 200 && cy > -200 && cy < canvasHeight + 200) {
-              const r = (entity.size + 80) * zoom
-              ctx.beginPath()
-              ctx.ellipse(cx, cy, r, r * 0.8, 0, 0, Math.PI * 2)
-              ctx.fill()
-            }
-          }
-        }
-      }
+      // 2. Render Map Objects (Obstacles, Resources)
+      renderMapObjects(ctx, game.map, cam, canvasWidth, canvasHeight, game.gameTime)
 
-      // Obstacles
-      for (let y = 0; y < game.map.rows; y++) {
-        for (let x = 0; x < game.map.cols; x++) {
-          if (game.map.grid[y][x] === 1) {
-            const sx = (x * TILE_SIZE - cam.x) * zoom
-            const sy = (y * TILE_SIZE - cam.y) * zoom
-            if (sx > -TILE_SIZE * zoom && sx < canvasWidth && sy > -TILE_SIZE * zoom && sy < canvasHeight) {
-              ctx.fillStyle = "#151520"
-              ctx.fillRect(sx + 4 * zoom, sy + 4 * zoom, TILE_SIZE * zoom, TILE_SIZE * zoom)
-              ctx.fillStyle = "#353548"
-              ctx.fillRect(sx, sy, TILE_SIZE * zoom, TILE_SIZE * zoom)
-              ctx.strokeStyle = "#555566"
-              ctx.strokeRect(sx, sy, TILE_SIZE * zoom, TILE_SIZE * zoom)
-            }
-          }
-        }
-      }
+      // 3. Build queue ghosts
+      for (const bq of game.buildQueue) {
+        const bd = BUILDINGS[bq.type]
+        if (bd && !bq.building) {
+          const iso = toIso(bq.x, bq.y)
+          const bsx = (iso.x - cam.x) * zoom
+          const bsy = (iso.y - cam.y) * zoom
+          const sz = bd.size * zoom
 
-      // Minerals
-      for (const m of game.map.minerals) {
-        const sx = (m.x - cam.x) * zoom
-        const sy = (m.y - cam.y) * zoom
-        if (sx > -40 && sx < canvasWidth + 40 && sy > -40 && sy < canvasHeight + 40 && m.amount > 0) {
-          ctx.fillStyle = `rgba(80,180,255,${0.6 + (m.amount / 3000) * 0.4})`
+          ctx.fillStyle = "rgba(0,255,0,0.15)"
+          // Draw iso footprint
           ctx.beginPath()
-          ctx.moveTo(sx, sy - 14 * zoom)
-          ctx.lineTo(sx + 10 * zoom, sy)
-          ctx.lineTo(sx, sy + 14 * zoom)
-          ctx.lineTo(sx - 10 * zoom, sy)
+          ctx.moveTo(bsx, bsy + sz*0.5)
+          ctx.lineTo(bsx + sz, bsy)
+          ctx.lineTo(bsx, bsy - sz*0.5)
+          ctx.lineTo(bsx - sz, bsy)
           ctx.closePath()
           ctx.fill()
-          ctx.strokeStyle = "#AADDFF"
+
+          ctx.strokeStyle = "rgba(0,255,0,0.4)"
           ctx.lineWidth = 1
           ctx.stroke()
         }
       }
 
-      // Geysers
-      for (const g of game.map.geysers) {
-        const sx = (g.x - cam.x) * zoom
-        const sy = (g.y - cam.y) * zoom
-        if (sx > -40 && sx < canvasWidth + 40 && sy > -40 && sy < canvasHeight + 40 && g.amount > 0) {
-          ctx.fillStyle = `rgba(80,255,80,${0.5 + (g.amount / 5000) * 0.5})`
-          ctx.beginPath()
-          ctx.arc(sx, sy, 18 * zoom, 0, Math.PI * 2)
-          ctx.fill()
-
-          // Smoke effect
-          const pulse = (Math.sin(game.gameTime / 500) + 1) / 2
-          ctx.fillStyle = `rgba(100,255,100,${0.2 * pulse})`
-          ctx.beginPath()
-          ctx.arc(sx, sy - 20 * zoom - pulse * 20 * zoom, 10 * zoom + pulse * 10 * zoom, 0, Math.PI * 2)
-          ctx.fill()
-        }
-      }
-
-      // Build queue ghosts
-      for (const bq of game.buildQueue) {
-        const bd = BUILDINGS[bq.type]
-        if (bd && !bq.building) {
-          const bsx = (bq.x - cam.x) * zoom
-          const bsy = (bq.y - cam.y) * zoom
-          ctx.fillStyle = "rgba(0,255,0,0.15)"
-          ctx.fillRect(bsx - bd.size * zoom, bsy - bd.size * zoom, bd.size * 2 * zoom, bd.size * 2 * zoom)
-          ctx.strokeStyle = "rgba(0,255,0,0.4)"
-          ctx.lineWidth = 1
-          ctx.strokeRect(bsx - bd.size * zoom, bsy - bd.size * zoom, bd.size * 2 * zoom, bd.size * 2 * zoom)
-        }
-      }
-
-      // Rally points
+      // 4. Rally points
       for (const entity of game.entities) {
         if (entity.selected && entity.rally) {
-          const sx = (entity.x - cam.x) * zoom
-          const sy = (entity.y - cam.y) * zoom
-          const rx = (entity.rally.x - cam.x) * zoom
-          const ry = (entity.rally.y - cam.y) * zoom
+          const isoStart = toIso(entity.x, entity.y)
+          const isoEnd = toIso(entity.rally.x, entity.rally.y)
+
+          const sx = (isoStart.x - cam.x) * zoom
+          const sy = (isoStart.y - cam.y) * zoom
+          const rx = (isoEnd.x - cam.x) * zoom
+          const ry = (isoEnd.y - cam.y) * zoom
 
           ctx.strokeStyle = "rgba(0,255,0,0.5)"
           ctx.setLineDash([5, 5])
@@ -272,16 +225,25 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
         }
       }
 
-      // Entities
-      for (const entity of game.entities) {
+      // 5. Entities
+      // Sort by Y (painter's algorithm) for depth
+      // In iso, draw order is by (x+y) usually, which corresponds to isoY
+      // So sorting by isoY should be correct.
+      // Since isoY = (x+y)/2, sorting by x+y is enough.
+
+      const sortedEntities = [...game.entities].sort((a, b) => (a.x + a.y) - (b.x + b.y))
+
+      for (const entity of sortedEntities) {
         if (entity.hp <= 0) continue
 
         const fx = Math.floor(entity.x / FOG_SIZE)
         const fy = Math.floor(entity.y / FOG_SIZE)
         if (entity.team === 1 && game.fogVisible[fy * game.map.cols + fx] === 0) continue
 
-        const sx = (entity.x - cam.x) * zoom
-        const sy = (entity.y - cam.y) * zoom
+        const iso = toIso(entity.x, entity.y)
+        const sx = (iso.x - cam.x) * zoom
+        const sy = (iso.y - cam.y) * zoom
+
         if (sx < -100 || sx > canvasWidth + 100 || sy < -100 || sy > canvasHeight + 100) continue
 
         const isAlly = entity.team === 0
@@ -289,35 +251,26 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
 
         // Attack lines for selected units
         if (entity.selected && entity.target && entity.target.hp > 0) {
+          const tIso = toIso(entity.target.x, entity.target.y)
+          const tx = (tIso.x - cam.x) * zoom
+          const ty = (tIso.y - cam.y) * zoom
+
           ctx.strokeStyle = "#FF0000"
           ctx.lineWidth = 1
           ctx.setLineDash([2, 4])
           ctx.beginPath()
-          ctx.moveTo(sx, sy)
-          ctx.lineTo((entity.target.x - cam.x) * zoom, (entity.target.y - cam.y) * zoom)
+          ctx.moveTo(sx, sy - entity.size * zoom) // Start from body center roughly
+          ctx.lineTo(tx, ty - entity.target.size * zoom)
           ctx.stroke()
           ctx.setLineDash([])
         }
       }
 
-      // Effects
+      // 6. Effects
       renderEffects(ctx, game.effects, cam)
 
-      // Fog of war
-      for (let fy = 0; fy < game.map.rows; fy++) {
-        for (let fx = 0; fx < game.map.cols; fx++) {
-          const idx = fy * game.map.cols + fx
-          if (game.fogVisible[idx] === 0) {
-            const opacity = game.fogExplored[idx] === 1 ? 0.5 : 0.85
-            ctx.fillStyle = `rgba(0,0,0,${opacity})`
-            const fsx = (fx * FOG_SIZE - cam.x) * zoom
-            const fsy = (fy * FOG_SIZE - cam.y) * zoom
-            if (fsx > -FOG_SIZE * zoom && fsx < canvasWidth && fsy > -FOG_SIZE * zoom && fsy < canvasHeight) {
-              ctx.fillRect(fsx, fsy, FOG_SIZE * zoom + 1, FOG_SIZE * zoom + 1)
-            }
-          }
-        }
-      }
+      // 7. Fog of war
+      renderFog(ctx, game.map, cam, game.fogExplored, game.fogVisible, canvasWidth, canvasHeight)
 
       // Selection box
       if (dragRef.current.active) {
@@ -337,18 +290,29 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
       if (ui.buildMode) {
         const bd = BUILDINGS[ui.buildMode]
         if (bd) {
-          const wmx = mouseRef.current.x / zoom + cam.x
-          const wmy = mouseRef.current.y / zoom + cam.y
-          const gx = Math.floor(wmx / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2
-          const gy = Math.floor(wmy / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2
-          const bsx = (gx - cam.x) * zoom
-          const bsy = (gy - cam.y) * zoom
+          // Snap to grid
+          const worldPos = toWorld(mouseRef.current.x, mouseRef.current.y)
+          const gx = Math.floor(worldPos.x / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2
+          const gy = Math.floor(worldPos.y / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2
+
+          const iso = toIso(gx, gy)
+          const bsx = (iso.x - cam.x) * zoom
+          const bsy = (iso.y - cam.y) * zoom
+          const sz = bd.size * zoom
 
           ctx.fillStyle = "rgba(0,255,0,0.3)"
           ctx.strokeStyle = "#00FF00"
           ctx.lineWidth = 2
-          ctx.fillRect(bsx - bd.size * zoom, bsy - bd.size * zoom, bd.size * 2 * zoom, bd.size * 2 * zoom)
-          ctx.strokeRect(bsx - bd.size * zoom, bsy - bd.size * zoom, bd.size * 2 * zoom, bd.size * 2 * zoom)
+
+          // Draw footprint
+          ctx.beginPath()
+          ctx.moveTo(bsx, bsy + sz*0.5)
+          ctx.lineTo(bsx + sz, bsy)
+          ctx.lineTo(bsx, bsy - sz*0.5)
+          ctx.lineTo(bsx - sz, bsy)
+          ctx.closePath()
+          ctx.fill()
+          ctx.stroke()
         }
       }
 
@@ -358,13 +322,16 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
         if (ab?.range) {
           const sel = game.selected[0]
           if (sel) {
-            const asx = (sel.x - cam.x) * zoom
-            const asy = (sel.y - cam.y) * zoom
+            const iso = toIso(sel.x, sel.y)
+            const asx = (iso.x - cam.x) * zoom
+            const asy = (iso.y - cam.y) * zoom
             ctx.strokeStyle = "rgba(100,200,255,0.5)"
             ctx.setLineDash([5, 5])
             ctx.lineWidth = 2
+
+            // In iso, circle becomes ellipse 2:1
             ctx.beginPath()
-            ctx.arc(asx, asy, ab.range * zoom, 0, Math.PI * 2)
+            ctx.ellipse(asx, asy, ab.range * zoom * 2, ab.range * zoom, 0, 0, Math.PI * 2)
             ctx.stroke()
             ctx.setLineDash([])
           }
@@ -414,11 +381,10 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
     }
   }, [ui.buildMode, ui.abilityMode, onGameEnd])
 
-  // Convert screen to world coordinates
-  const toWorld = useCallback((cx: number, cy: number) => ({
-    x: cx / camRef.current.zoom + camRef.current.x,
-    y: cy / camRef.current.zoom + camRef.current.y,
-  }), [])
+  // Convert screen to world coordinates (Iso Reverse)
+  const toWorld = useCallback((cx: number, cy: number) => {
+    return toWorldFromIso(cx, cy, camRef.current.x, camRef.current.y, camRef.current.zoom)
+  }, [])
 
   // Mouse handlers
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
@@ -551,15 +517,23 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
     const mx = e.clientX - rect.left
     const my = e.clientY - rect.top
 
+    // Minimap is top-down, so we get World Coords directly
+    const wx = (mx / 180) * game.map.width
+    const wy = (my / 135) * game.map.height
+
     if (e.button === 2) {
-      const wx = (mx / 180) * game.map.width
-      const wy = (my / 135) * game.map.height
       game.issueCommand("attackMove", { x: wx, y: wy }, e.shiftKey)
     } else {
       const canvas = canvasRef.current
       if (!canvas) return
-      camRef.current.x = (mx / 180) * game.map.width - canvas.width / 2 / camRef.current.zoom
-      camRef.current.y = (my / 135) * game.map.height - canvas.height / 2 / camRef.current.zoom
+
+      // We need to set camera to center on this World Point
+      // cam.x/y is top-left of screen in Iso space.
+      // 1. Convert target World to Iso
+      const iso = toIso(wx, wy)
+      // 2. Adjust for screen center
+      camRef.current.x = iso.x - canvas.width / 2 / camRef.current.zoom
+      camRef.current.y = iso.y - canvas.height / 2 / camRef.current.zoom
     }
   }, [])
 
@@ -582,8 +556,10 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
         } else {
           const pos = game.selectControlGroup(parseInt(e.key))
           if (pos && canvasRef.current) {
-            camRef.current.x = pos.x - canvasRef.current.width / 2
-            camRef.current.y = pos.y - canvasRef.current.height / 2
+            // Center camera on pos (World)
+            const iso = toIso(pos.x, pos.y)
+            camRef.current.x = iso.x - canvasRef.current.width / 2
+            camRef.current.y = iso.y - canvasRef.current.height / 2
           }
         }
       }
@@ -607,15 +583,17 @@ export function GameView({ faction, difficulty, onGameEnd }: GameViewProps) {
         case "f1":
           const base = game.entities.find(e => e.team === 0 && e.isBuilding)
           if (base && canvasRef.current) {
-            camRef.current.x = base.x - canvasRef.current.width / 2
-            camRef.current.y = base.y - canvasRef.current.height / 2
+             const iso = toIso(base.x, base.y)
+             camRef.current.x = iso.x - canvasRef.current.width / 2
+             camRef.current.y = iso.y - canvasRef.current.height / 2
           }
           break
         case " ":
           if (game.selected.length > 0 && canvasRef.current) {
             const sel = game.selected[0]
-            camRef.current.x = sel.x - canvasRef.current.width / 2
-            camRef.current.y = sel.y - canvasRef.current.height / 2
+            const iso = toIso(sel.x, sel.y)
+            camRef.current.x = iso.x - canvasRef.current.width / 2
+            camRef.current.y = iso.y - canvasRef.current.height / 2
           }
           break
       }
